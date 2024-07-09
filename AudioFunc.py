@@ -13,13 +13,16 @@ def find_song(name):
 def download_song(name, path = "Audio"):
     if "https://www.youtube.com" not in name :
         try :
+            name = name.replace("_", " ")
             url = find_song(name)
+            name = name.replace(" ", "_")
         except :
             return "Song not found : Wrong Name"
     else :
         url = name
     yt_configs = {
         'format' : 'bestaudio/best',
+        'ffmpeg_location' : r'C:\ffmpeg',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'wav',

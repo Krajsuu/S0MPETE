@@ -24,3 +24,7 @@ class CSpotify:
         response = requests.get(f'https://api.spotify.com/v1/albums/{album_id}', headers={'Authorization': 'Bearer ' + self.token})
         return response.json()
 
+    def get_playlist(self, playlist_id):
+        response = requests.get(f'https://api.spotify.com/v1/playlists/{playlist_id}' + '?market=PL', headers={'Authorization': 'Bearer ' + self.token})
+        #https://api.spotify.com/v1/playlists/37i9dQZF1EIf4OaZ1XTJYw?market=PL'
+        return response.json()

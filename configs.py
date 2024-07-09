@@ -1,4 +1,10 @@
-CLIENT_ID = "client_id"
-CLIENT_SECRET = "client_secret"
-REDIRECT_URL = "URL"
-DISCORD_TOKEN = "discord_token"
+CLIENT_ID = client_id
+CLIENT_SECRET = client_secret
+REDIRECT_URL = redirect_url
+DISCORD_TOKEN = discord_token
+YOUTUBE_API_KEY = youtube_api_key
+dbs_name = None
+user_name = None
+host = None
+password = None
+port = None
