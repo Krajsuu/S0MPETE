@@ -11,14 +11,14 @@ intents = discord.Intents.all()
 intents.members = True
 client = commands.Bot(command_prefix='!', intents = intents) # Create a new bot instance
 
-queues = {}
 SpotifyFunc = SpotifyFunc.CSpotify()
-database = DatabaseScript.database()
-
+database = DatabaseScript.Database()
 async def check_queue(ctx):
     voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
-    if len(queues[ctx.guild.id]) > 0:
-        name = queues[ctx.guild.id].pop(0)
+    while voice.is_playing():
+        await asyncio.sleep(7)
+    if await database.queue_length(ctx.guild.id) > 0:
+        name = await database.pop_top_queue(ctx.guild.id)
         await play_song(ctx, name)
 
 def memory_cleaner(directory = "Audio", age_in_seconds = 900):
@@ -44,15 +44,16 @@ async def background_auth_generating():
 @client.event
 async def on_ready():
     print("Bot ON")
+    await database.connect()
     await setup_hook()
 
 @client.event
 async def on_guild_join(guild):
-    pass
+    database.insert_new_user(guild.id)
 
 @client.event
 async def on_guild_remove(guild):
-    pass
+    database.remove_user(guild.id)
 
 @client.command()
 async def explain_game(ctx):
@@ -71,7 +72,7 @@ async def join(ctx):
 async def leave(ctx):
     if ctx.voice_client:
         await ctx.guild.voice_client.disconnect()
-        ctx.send("I left the voice channel")
+        await ctx.send("I left the voice channel")
     else:
         await ctx.send("I am not in a voice channel")
 
@@ -79,9 +80,10 @@ async def leave(ctx):
 async def stop(ctx):
     voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
     if(voice.is_playing()):
-        voice.stop(after = lambda e: asyncio.run_coroutine_threadsafe(check_queue(ctx), client.loop))
+        voice.stop()
+        await restart_queue(ctx)
     else :
-        ctx.senc("~~Nothing is playing~~")
+        ctx.send("~~Nothing is playing~~")
 
 @client.command(pass_context=True)
 async def pause(ctx):
@@ -89,7 +91,7 @@ async def pause(ctx):
     if(voice.is_playing()):
         voice.pause()
     else :
-        ctx.senc("~~Nothing is playing~~")
+        ctx.send("~~Nothing is playing~~")
 
 @client.command(pass_context=True)
 async def resume(ctx):
@@ -97,7 +99,13 @@ async def resume(ctx):
     if(voice.is_paused()):
         voice.resume()
     else :
-        ctx.senc("~~Nothing is paused~~")
+        ctx.send("~~Nothing is paused~~")
+
+@client.command(pass_context=True)
+async def skip(ctx):
+    voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
+    voice.stop()
+    await check_queue(ctx)
 
 @client.command(pass_context=True)
 async def play_song(ctx, *args):
@@ -116,17 +124,38 @@ async def queue(ctx,*args):
 
     guild_id = ctx.message.guild.id
 
-    if guild_id in queues:
-        queues[guild_id].append(name)
-    else:
-        queues[guild_id] = [name]
+    await database.add_to_queue(guild_id, name)
 
-    await ctx.send(f'{name} added to queue')
+    await ctx.send(f'{name.replace("_"," ")} added to queue')
+
+@client.command(pass_context=True)
+async def restart_queue(ctx):
+    await database.restart_queue(ctx.guild.id)
+    await ctx.send("Queue restarted")
 
 async def setup_hook():
     client.loop.create_task(background_cleaner())
     client.loop.create_task(background_auth_generating())
 
+@client.command(pass_context=True)
+async def play_queue(ctx):
+    voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
+    if voice.is_playing():
+        voice.stop()
+    name = await database.pop_top_queue(ctx.guild.id)
+    await play_song(ctx, name)
+
+@client.command(pass_context=True)
+async def play_playlist(ctx, playlist_id):
+    if("album" in playlist_id):
+        await ctx.send("Album is not an playlist! Use command !play_album")
+    elif("https://open.spotify.com/playlist/" not in playlist_id):
+        await ctx.send("Wrong link!")
+    else:
+        playlist = playlist_id.split("/")[-1]
+        playlist = SpotifyFunc.get_playlist(playlist)
+        for song in playlist['tracks']['items']:
+            await database.add_to_queue(ctx.guild.id, song['track']['name'])
 @client.command(pass_context=True)
 async def play(ctx, songs = 10):
     pass

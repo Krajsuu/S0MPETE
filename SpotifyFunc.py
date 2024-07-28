@@ -24,7 +24,21 @@ class CSpotify:
         response = requests.get(f'https://api.spotify.com/v1/albums/{album_id}', headers={'Authorization': 'Bearer ' + self.token})
         return response.json()
 
-    def get_playlist(self, playlist_id):
-        response = requests.get(f'https://api.spotify.com/v1/playlists/{playlist_id}' + '?market=PL', headers={'Authorization': 'Bearer ' + self.token})
-        #https://api.spotify.com/v1/playlists/37i9dQZF1EIf4OaZ1XTJYw?market=PL'
+    def get_playlist_link(self, playlist_id):
+        link = f'https://api.spotify.com/v1/playlists/{playlist_id}' + '?market=PL'
+        param = {
+            'market': 'PL'
+        }
+        response = requests.get(link, headers={'Authorization': 'Bearer ' + self.token} , params = param)
         return response.json()
+
+    def get_playlist_name(self, playlist_name):
+        params = {
+            'q' : playlist_name,
+            'type' : 'playlist',
+            'market' : 'ES'
+        }
+        response = requests.get('https://api.spotify.com/v1/search', headers={'Authorization': 'Bearer ' + self.token}, params=params)
+        response = self.get_playlist_link(response['playlists']['items'][0]['id'])
+        return response.json()
+
