@@ -1,8 +1,10 @@
 import os
 import yt_dlp
 import requests
+import asyncio
 from configs import YOUTUBE_API_KEY
-def find_song(name):
+from mutagen.wave import WAVE
+async def find_song(name):
     #name = name.replace(" ", "_")
     search_url = f'https://www.googleapis.com/youtube/v3/search?part=snippet&q={name}&type=video&key={YOUTUBE_API_KEY}'
     response = requests.get(search_url)
@@ -10,11 +12,11 @@ def find_song(name):
     url = f'https://www.youtube.com/watch?v={response["items"][0]["id"]["videoId"]}'
     return url
 
-def download_song(name, path = "Audio"):
+async def download_song(name, path = "Audio"):
     if "https://www.youtube.com" not in name :
         try :
             name = name.replace("_", " ")
-            url = find_song(name)
+            url = await find_song(name)
             name = name.replace(" ", "_")
         except :
             return "Song not found : Wrong Name"
@@ -33,9 +35,16 @@ def download_song(name, path = "Audio"):
     with yt_dlp.YoutubeDL(yt_configs) as ydl:
         ydl.download([url])
 
-def delete_song(name, path = "Audio", extension = "wav"):
+async def delete_song(name, path = "Audio", extension = "wav"):
     os.remove(f'{path}/{name}.{extension}')
 
-def delete_all_songs(path = "Audio"):
+async def song_duration(name, path = "Audio"):
+    audio = WAVE(f'{path}/{name}')
+    return int(audio.info.length)
+
+async def delete_all_songs(path = "Audio"):
     for file in os.listdir(path):
         os.remove(f'{path}/{file}')
+
+len = song_duration("chivas_w_malym_pokoju.wav")
+print(f"Duration of song is {int(len/60)} minutes and {int(len%60)} seconds")

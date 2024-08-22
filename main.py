@@ -7,35 +7,67 @@ import asyncio
 import SpotifyFunc
 import time
 import DatabaseScript
+import random
+import
 intents = discord.Intents.all()
 intents.members = True
 client = commands.Bot(command_prefix='!', intents = intents) # Create a new bot instance
-
 SpotifyFunc = SpotifyFunc.CSpotify()
 database = DatabaseScript.Database()
+
 async def check_queue(ctx):
+    '''
+    Function that checks if the queue is empty and if not plays the next song
+    :param ctx:
+    :return:
+    '''
     voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
     while voice.is_playing():
         await asyncio.sleep(7)
-    if await database.queue_length(ctx.guild.id) > 0:
+    if await database.check_loop(ctx.guild.id):
+        name = await database.get_current_song(ctx.guild.id)
+        await play(ctx,name)
+    elif await database.queue_length(ctx.guild.id) > 0:
         name = await database.pop_top_queue(ctx.guild.id)
-        await play_song(ctx, name)
+        await playSong(ctx, name)
 
-def memory_cleaner(directory = "Audio", age_in_seconds = 900):
+async def memory_cleaner(directory = "Audio", age_in_seconds = 900):
+    '''
+    Function that removes files from the directory that are older than age_in_seconds
+    :param directory:
+    :param age_in_seconds:
+    :return:
+    '''
     now = time.time()
+    tasks = []
     for file in os.listdir(directory):
         file_path = os.path.join(directory, file)
         if os.path.isfile(file_path):
             if now - os.path.getmtime(file_path) > age_in_seconds:
-                os.remove(file_path)
+                tasks.append(check_and_remove(file, file_path))
+
+    await asyncio.gather(*tasks)
+
+async def check_and_remove(file, file_path):
+    if not await database.check_loop(file):
+        os.remove(file_path)
 
 async def background_cleaner():
+    """
+    Function that runs in the background and cleans the memory every 15 minutes
+    :return:
+    """
     await client.wait_until_ready()
     while not client.is_closed():
-        memory_cleaner()
+        await memory_cleaner()
         await asyncio.sleep(900)
 
+
 async def background_auth_generating():
+    """
+    Function that runs in the background and generates the auth token every 59 minutes
+    :return:
+    """
     await client.wait_until_ready()
     while not client.is_closed():
         SpotifyFunc.generate_token()
@@ -43,17 +75,21 @@ async def background_auth_generating():
 
 @client.event
 async def on_ready():
+    """
+    Function that runs when the bot is ready
+    :return:
+    """
     print("Bot ON")
     await database.connect()
     await setup_hook()
 
 @client.event
 async def on_guild_join(guild):
-    database.insert_new_user(guild.id)
+    await database.insert_new_user(guild.id)
 
 @client.event
 async def on_guild_remove(guild):
-    database.remove_user(guild.id)
+    await database.remove_user(guild.id)
 
 @client.command()
 async def explain_game(ctx):
@@ -82,13 +118,15 @@ async def stop(ctx):
     if(voice.is_playing()):
         voice.stop()
         await restart_queue(ctx)
+        await database.reset_current_song(ctx.guild.id)
+        await database.unloop_song(ctx.guild.id)
     else :
         ctx.send("~~Nothing is playing~~")
 
 @client.command(pass_context=True)
 async def pause(ctx):
     voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
-    if(voice.is_playing()):
+    if(voice.is_playing() and ctx.author.voice):
         voice.pause()
     else :
         ctx.send("~~Nothing is playing~~")
@@ -96,36 +134,44 @@ async def pause(ctx):
 @client.command(pass_context=True)
 async def resume(ctx):
     voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
-    if(voice.is_paused()):
+    if(voice.is_paused() and ctx.author.voice):
         voice.resume()
     else :
         ctx.send("~~Nothing is paused~~")
 
 @client.command(pass_context=True)
 async def skip(ctx):
-    voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
-    voice.stop()
-    await check_queue(ctx)
+    if await database.check_loop(ctx.guild.id):
+        await ctx.send("Can't skip looped song")
+    elif ctx.author.voice:
+        voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
+        voice.stop()
+        await check_queue(ctx)
 
 @client.command(pass_context=True)
-async def play_song(ctx, *args):
-    name = "_".join(args)
+async def play(ctx, *args):
+    if ctx.author.voice:
+        name = "_".join(args)
+        voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
+        if voice.is_playing():
+            voice.stop()
+        await playSong(ctx, name)
+    else :
+        await ctx.send("You are not in a voice channel")
+
+async def playSong(ctx, song):
     voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
-    if voice.is_playing():
-        voice.stop()
-    if f'Audio/{name}.wav' not in os.listdir('Audio'):
-        AudioFunc.download_song(name)
-    voice.play(discord.FFmpegPCMAudio(f'Audio/{name}.wav'),  after = lambda e: asyncio.run_coroutine_threadsafe(check_queue(ctx), client.loop))
+    if f'{song}.wav' not in os.listdir('Audio'):
+        await AudioFunc.download_song(song)
+    voice.play(discord.FFmpegPCMAudio(f'Audio/{song}.wav'), after=lambda e: asyncio.run_coroutine_threadsafe(check_queue(ctx), client.loop))
+    await database.change_current_song(ctx.guild.id, song)
 
 @client.command(pass_context=True)
 async def queue(ctx,*args):
     name = "_".join(args)
     voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
-
     guild_id = ctx.message.guild.id
-
     await database.add_to_queue(guild_id, name)
-
     await ctx.send(f'{name.replace("_"," ")} added to queue')
 
 @client.command(pass_context=True)
@@ -139,25 +185,104 @@ async def setup_hook():
 
 @client.command(pass_context=True)
 async def play_queue(ctx):
-    voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
-    if voice.is_playing():
-        voice.stop()
-    name = await database.pop_top_queue(ctx.guild.id)
-    await play_song(ctx, name)
+    if ctx.author.voice:
+        voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
+        if voice.is_playing():
+            voice.stop()
+        name = await database.pop_top_queue(ctx.guild.id)
+        await play(ctx, name)
 
 @client.command(pass_context=True)
-async def play_playlist(ctx, playlist_id):
-    if("album" in playlist_id):
-        await ctx.send("Album is not an playlist! Use command !play_album")
-    elif("https://open.spotify.com/playlist/" not in playlist_id):
+async def change_playlist(ctx, playlist_id):
+    if("https://open.spotify.com/playlist/" not in playlist_id):
         await ctx.send("Wrong link!")
     else:
-        playlist = playlist_id.split("/")[-1]
-        playlist = SpotifyFunc.get_playlist(playlist)
-        for song in playlist['tracks']['items']:
-            await database.add_to_queue(ctx.guild.id, song['track']['name'])
+        await database.change_playlist(ctx.guild.id, playlist_id)
+        await ctx.send("Playlist changed")
+
 @client.command(pass_context=True)
-async def play(ctx, songs = 10):
-    pass
+async def play_playlist(ctx):
+    if ctx.author.voice:
+        response = database.get_playlist(ctx.guild.id)
+        voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
+        if response and database.check_loop(ctx.guild.id) and not voice.is_playing():
+            playlist = response.split("/")[-1]
+            playlist = SpotifyFunc.get_playlist_link(playlist)
+            for song in playlist['tracks']['items']:
+                await database.add_to_queue(ctx.guild.id, song['track']['name'])
+            await play_queue(ctx)
+        else:
+            await ctx.send("Can't play playlist")
+
+@client.command(pass_context=True)
+async def startgame(ctx, NumOfSongs = 10):
+    if ctx.author.voice:
+        voice_channel = ctx.message.author.voice.channel
+        text_channel = ctx.message.channel
+        amount_of_members = len(voice_channel.members)
+        if amount_of_members < 3:
+            await ctx.send("Not enough players")
+        voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
+        if voice.is_playing():
+            voice.stop()
+            await database.reset_current_song(ctx.guild.id)
+            await database.unloop_song(ctx.guild.id)
+        players = []
+        for member in voice_channel.members:
+            players.append(member)
+        songs = []
+        playlist = database.get_playlist(ctx.guild.id)
+        playlist = playlist.split("/")[-1]
+        playlist = SpotifyFunc.get_playlist_link(playlist)
+        playlist_length = len(playlist['tracks']['items'])
+        if playlist_length < NumOfSongs:
+            NumOfSongs = playlist_length
+        AvailableSongs = [True] * playlist_length
+        for song in range(NumOfSongs):
+            RandomSong = random.randint(0, playlist_length - 1)
+            if AvailableSongs[RandomSong]:
+                songs.append(f"{playlist['tracks']['items'][RandomSong]['tracks']['artist'][0]['name'].replace(' ','_')}-{playlist['tracks']['items'][RandomSong]['track']['name'].replace(' ','_')}")
+                AvailableSongs[RandomSong] = False
+        await database.save_game_info(ctx.guild.id, songs,players, text_channel)
+        await ctx.send("Game started")
+        await game(ctx)
+
+async def game(ctx):
+    voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
+    response = await database.next_game_round(ctx.guild.id)
+
+    def check_message(message):
+        if message.channel ==
+
+    while response :
+        song = database.get_game_song(ctx.guild.id)
+        name = song.split("-")[0]
+        title = song.split("-")[1]
+        full_title = name + "_" + title
+        len = await AudioFunc.song_duration(song)
+        if len > 60:
+            start = random.randint(12, len - 40)
+        else:
+            start = 0
+        if f'Audio/{full_title}.wav' not in os.listdir('Audio'):
+            await AudioFunc.download_song(full_title)
+        await voice.play(discord.FFmpegPCMAudio(f'Audio/{full_title}.wav', before_options=f"-ss {start} -t 30"))
+        try:
+            message = await client.wait_for('message', timeout=35, check = )
+
+
+
+
+
+
+    
+@client.command()
+async def loop(ctx):
+    if not await database.check_loop(ctx.guild.id) and ctx.author.voice:
+        await database.loop_song(ctx.guild.id)
+        await ctx.send("Looped")
+    elif ctx.author.voice:
+        await database.unloop_song(ctx.guild.id)
+        await ctx.send("Unlooped")
 
 client.run(DISCORD_TOKEN)

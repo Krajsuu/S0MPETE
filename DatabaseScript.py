@@ -22,9 +22,9 @@ class Database:
         )
 
     async def insert_new_user(self, id="", queue=[], playlist="https://open.spotify.com/playlist/37i9dQZEVXbMDoHDwVN2tF"):
-        query = "INSERT INTO users (guildID, queue, playlist) VALUES ($1, $2, $3);"
+        query = "INSERT INTO users (guildID, queue, playlist, currentsong, repeat) VALUES ($1, $2, $3,$4,$5);"
         async with self.pool.acquire() as connection:
-            await connection.execute(query, str(id), queue, playlist)
+            await connection.execute(query, str(id), queue, playlist, '', 'false')
 
     async def add_to_queue(self, id, song):
         query = """
@@ -34,6 +34,33 @@ class Database:
         """
         async with self.pool.acquire() as connection:
             await connection.execute(query, [song], str(id))
+
+    async def change_current_song(self, id, song):
+        query = """
+            UPDATE users
+            SET currentSong = $1
+            WHERE guildID = $2;
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, song, str(id))
+
+    async def get_current_song(self, id):
+        query = """
+            SELECT currentSong FROM users
+            WHERE guildID = $1;
+        """
+        async with self.pool.acquire() as connection:
+            response = await connection.fetchrow(query, str(id))
+            return response['currentsong']
+
+    async def reset_current_song(self, id):
+        query = """
+            UPDATE users
+            SET currentSong = ''
+            WHERE guildID = $1;
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, str(id))
 
     async def pop_top_queue(self, id):
         select_query = """
@@ -91,6 +118,63 @@ class Database:
         async with self.pool.acquire() as connection:
             await connection.execute(query, str(id))
 
+    async def loop_song(self, id):
+        query = """
+            UPDATE users 
+            SET repeat = 'true'
+            WHERE guildID = $1;
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, str(id))
+
+        '''query = """
+            SELECT currentSong FROM users
+            WHERE guildID = $1;
+        """
+        async with self.pool.acquire() as connection:
+            response = await connection.fetchrow(query, str(id))
+        query = """
+            INSERT INTO loops (guildID, songName) values ($1, $2);
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, str(id), response['currentsong'])'''
+
+
+    async def unloop_song(self, id):
+        query = """
+            UPDATE users
+            SET repeat = 'false'
+            WHERE guildID = $1;
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, str(id))
+
+    async def check_loop(self, arg):
+        if type(arg) == int :
+            query = """
+                SELECT repeat FROM users
+                WHERE guildID = $1;
+            """
+            async with self.pool.acquire() as connection:
+                response = await connection.fetchrow(query, str(arg))
+                status = response['repeat']
+                if status == 'true':
+                    return True
+                return False
+        else :
+            query = """
+                         SELECT repeat FROM users
+                         WHERE currentSong = $1;
+                     """
+            async with self.pool.acquire() as connection:
+                response = await connection.fetchrow(query, str(arg))
+                if response == None:
+                    return False
+                if response['repeat'] == 'true':
+                    return True
+                return False
+
+
     async def get_playlist(self, id):
         query = """
             SELECT playlist FROM users
@@ -101,6 +185,76 @@ class Database:
             if response:
                 return response['playlist']
             return None
+
+    async def save_game_info(self, id, songs, players, channelID ):
+        if songs == [] or players == [] :
+            return False
+        query = """
+            INSERT INTO games (guildID, players, songs, currentSong, channelID) values ($1, $2, $3, $4, $5);
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, str(id), players, songs, '', str(channelID))
+
+    async def next_game_round(self, id):
+        query = """
+            SELECT songs FROM games
+            WHERE guildID = $1;
+        """
+        with self.pool.acquire() as connection:
+            response = await connection.fetchrow(query, str(id))
+            songs = response['songs']
+            if songs == []:
+                return False
+            song = songs.pop(0)
+            query = """
+                UPDATE games
+                SET songs = $1
+                WHERE guildID = $2;
+            """
+            await connection.execute(query, songs, str(id))
+            query = """
+                UPDATE games
+                SET currentSong = $1
+                WHERE guildID = $2;
+            """
+            await connection.execute(query, song, str(id))
+            return True
+
+    async def get_players(self, id):
+        query = """
+            SELECT players FROM games
+            WHERE guildID = $1;
+        """
+        async with self.pool.acquire() as connection:
+            response = await connection.fetchrow(query, str(id))
+            return response['players']
+
+    async def get_game_song(self, id):
+        query = """
+            SELECT currentSong FROM games
+            WHERE guildID = $1;
+        """
+        async with self.pool.acquire() as connection:
+            response = await connection.fetchrow(query, str(id))
+            return response['currentsong']
+
+    async def end_game(self, id):
+        query = """
+            DELETE FROM games
+            WHERE guildID = $1;
+        """
+        async with self.pool.acquire() as connection:
+            await connection.execute(query, str(id))
+
+    async def get_game_channel(self, id):
+        query = """
+            SELECT channelID FROM games
+            WHERE guildID = $1;
+        """
+        async with self.pool.acquire() as connection:
+            response = await connection.fetchrow(query, str(id))
+            return response['channelID']
+
 
 
 
