@@ -8,7 +8,7 @@ import SpotifyFunc
 import time
 import DatabaseScript
 import random
-import
+import json
 intents = discord.Intents.all()
 intents.members = True
 client = commands.Bot(command_prefix='!', intents = intents) # Create a new bot instance
@@ -70,7 +70,7 @@ async def background_auth_generating():
     """
     await client.wait_until_ready()
     while not client.is_closed():
-        SpotifyFunc.generate_token()
+        await SpotifyFunc.generate_token()
         await asyncio.sleep(3540)
 
 @client.event
@@ -207,12 +207,32 @@ async def play_playlist(ctx):
         voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
         if response and database.check_loop(ctx.guild.id) and not voice.is_playing():
             playlist = response.split("/")[-1]
-            playlist = SpotifyFunc.get_playlist_link(playlist)
+            playlist = await SpotifyFunc.get_playlist_link(playlist)
             for song in playlist['tracks']['items']:
                 await database.add_to_queue(ctx.guild.id, song['track']['name'])
             await play_queue(ctx)
         else:
             await ctx.send("Can't play playlist")
+
+async def create_file(players, guildID):
+    with open(f"Game_{guildID}.json", "w") as file:
+        for player in players:
+            file.write(f"{player}\n")
+
+
+@client.command(pass_context=True)
+async def test(ctx):
+    def check_message(message):
+        print("test")
+        print(message)
+        print(type(message.author.name))
+        print(dir(message))
+        print(message.content)
+        print(message.author.name)
+    try:
+        message = await client.wait_for('message', timeout=35, check=check_message)
+    except:
+        print("Time is up")
 
 @client.command(pass_context=True)
 async def startgame(ctx, NumOfSongs = 10):
@@ -222,6 +242,7 @@ async def startgame(ctx, NumOfSongs = 10):
         amount_of_members = len(voice_channel.members)
         if amount_of_members < 3:
             await ctx.send("Not enough players")
+            return
         voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
         if voice.is_playing():
             voice.stop()
@@ -229,11 +250,11 @@ async def startgame(ctx, NumOfSongs = 10):
             await database.unloop_song(ctx.guild.id)
         players = []
         for member in voice_channel.members:
-            players.append(member)
+            players.append(member.name)
         songs = []
-        playlist = database.get_playlist(ctx.guild.id)
+        playlist = await database.get_playlist(ctx.guild.id)
         playlist = playlist.split("/")[-1]
-        playlist = SpotifyFunc.get_playlist_link(playlist)
+        playlist = await SpotifyFunc.get_playlist_link(playlist)
         playlist_length = len(playlist['tracks']['items'])
         if playlist_length < NumOfSongs:
             NumOfSongs = playlist_length
@@ -241,18 +262,47 @@ async def startgame(ctx, NumOfSongs = 10):
         for song in range(NumOfSongs):
             RandomSong = random.randint(0, playlist_length - 1)
             if AvailableSongs[RandomSong]:
-                songs.append(f"{playlist['tracks']['items'][RandomSong]['tracks']['artist'][0]['name'].replace(' ','_')}-{playlist['tracks']['items'][RandomSong]['track']['name'].replace(' ','_')}")
+                author = playlist['tracks']['items'][RandomSong]['track']['artists'][0]['name'].replace(' ','_')
+                title = playlist['tracks']['items'][RandomSong]['track']['name'].replace(' ','_')
+                songs.append(f"{author.lower}-{title.lower}")
                 AvailableSongs[RandomSong] = False
         await database.save_game_info(ctx.guild.id, songs,players, text_channel)
+        players = dict.fromkeys(players, 0)
+        with open(f"Game_{ctx.guild.id}.json", "w") as file:
+            json.dump(players, file)
         await ctx.send("Game started")
         await game(ctx)
 
 async def game(ctx):
     voice = discord.utils.get(client.voice_clients, guild=ctx.guild)
     response = await database.next_game_round(ctx.guild.id)
-
+    channel = database.get_game_channel(ctx.guild.id)
+    result = {3: [], 1: []}
+    resultAvability = {"Full": True, "Artist": True, "Song": True}
     def check_message(message):
-        if message.channel ==
+        with open(f"Game_{ctx.guild.id}.json", "r") as file:
+            result = json.load(file)
+        players = list(result.keys())
+        if message.channel == channel and message.author.name in players:
+            message = message.lower().split()
+            if resultAvability["Full"] == True:
+                for word in name:
+                    if word in message:
+                        if resultAvability["Full"] == True and resultAvability["Artist"] == True:
+                            if message.author in result[1]:
+                                resultAvability["Full"] = False
+                                result[1] = []
+                                result[3].append(message.author)
+                            else:
+                                resultAvability["Artist"] = False
+                                result[1].append(message.author)
+                        break
+                for word in title:
+                    if word in message:
+                        if resultAvability["Song"] == False and message.author in result[1]:
+                            resultAvability["Full"] = False
+                            result[3].append(message.author)
+
 
     while response :
         song = database.get_game_song(ctx.guild.id)
@@ -268,8 +318,31 @@ async def game(ctx):
             await AudioFunc.download_song(full_title)
         await voice.play(discord.FFmpegPCMAudio(f'Audio/{full_title}.wav', before_options=f"-ss {start} -t 30"))
         try:
-            message = await client.wait_for('message', timeout=35, check = )
+            message = await client.wait_for('message', timeout=35, check = check_message)
 
+        except:
+            await ctx.send(f"Time is up! The song was {title} by {name}")
+            await database.next_game_round(ctx.guild.id)
+            continue
+        for points in result:
+            for player in result[points]:
+                with open(f"Game_{ctx.guild.id}.json", "r") as file:
+                    players = json.load(file)
+                players[player] += points
+                with open(f"Game_{ctx.guild.id}.json", "w") as file:
+                    json.dump(players, file)
+
+        response = await database.next_game_round(ctx.guild.id)
+        result = {3:[],1:[]}
+        resultAvability = {"Full": True, "Artist": True, "Song": True}
+    await ctx.send("Game ended")
+    await database.end_game(ctx.guild.id)
+    with open(f"Game_{ctx.guild.id}.json", "r") as file:
+        players = json.load(file)
+    players = sorted(players)
+    message = "The end! Congratulation players! The final score is:\n"
+    for player in players:
+        message += f"{player}: {players[player]}\n"
 
 
 

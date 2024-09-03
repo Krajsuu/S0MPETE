@@ -190,14 +190,14 @@ class Database:
         if songs == [] or players == [] :
             return False
         query = """
-            INSERT INTO games (guildID, players, songs, currentSong, channelID) values ($1, $2, $3, $4, $5);
+            INSERT INTO game (guildID, players, songs, currentSong, channelID) values ($1, $2, $3, $4, $5);
         """
         async with self.pool.acquire() as connection:
             await connection.execute(query, str(id), players, songs, '', str(channelID))
 
     async def next_game_round(self, id):
         query = """
-            SELECT songs FROM games
+            SELECT songs FROM game
             WHERE guildID = $1;
         """
         with self.pool.acquire() as connection:
@@ -207,13 +207,13 @@ class Database:
                 return False
             song = songs.pop(0)
             query = """
-                UPDATE games
+                UPDATE game
                 SET songs = $1
                 WHERE guildID = $2;
             """
             await connection.execute(query, songs, str(id))
             query = """
-                UPDATE games
+                UPDATE game
                 SET currentSong = $1
                 WHERE guildID = $2;
             """
@@ -222,7 +222,7 @@ class Database:
 
     async def get_players(self, id):
         query = """
-            SELECT players FROM games
+            SELECT players FROM game
             WHERE guildID = $1;
         """
         async with self.pool.acquire() as connection:
@@ -231,7 +231,7 @@ class Database:
 
     async def get_game_song(self, id):
         query = """
-            SELECT currentSong FROM games
+            SELECT currentSong FROM game
             WHERE guildID = $1;
         """
         async with self.pool.acquire() as connection:
@@ -240,7 +240,7 @@ class Database:
 
     async def end_game(self, id):
         query = """
-            DELETE FROM games
+            DELETE FROM game
             WHERE guildID = $1;
         """
         async with self.pool.acquire() as connection:
@@ -248,7 +248,7 @@ class Database:
 
     async def get_game_channel(self, id):
         query = """
-            SELECT channelID FROM games
+            SELECT channelID FROM game
             WHERE guildID = $1;
         """
         async with self.pool.acquire() as connection:

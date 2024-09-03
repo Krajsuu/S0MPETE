@@ -45,6 +45,3 @@ async def song_duration(name, path = "Audio"):
 async def delete_all_songs(path = "Audio"):
     for file in os.listdir(path):
         os.remove(f'{path}/{file}')
-
-len = song_duration("chivas_w_malym_pokoju.wav")
-print(f"Duration of song is {int(len/60)} minutes and {int(len%60)} seconds")
